@@ -1,11 +1,12 @@
 /**
  * seed_pokemon_meta.ts
  *
- * Populates the pokemon_meta table with all Pokémon species.
- * Determines is_mega_capable by checking each species' forms
- * for the is_mega flag on the pokemon-form endpoint.
+ * Populates the pokemon_meta table with all Pokémon available in the
+ * Champions format, sourced from the PokéAPI champions pokédex.
+ * Determines is_mega_capable by checking each species' forms for the
+ * is_mega flag on the pokemon-form endpoint.
  *
- * Run once (ever). Safe to re-run — uses upsert.
+ * Run once (ever). Safe to re-run — truncates the table first, then upserts.
  *
  * Usage:
  *   npx ts-node --project tsconfig.seed.json supabase/seeds/seed_pokemon_meta.ts
@@ -14,7 +15,7 @@
  *   - Migrations must have been applied (pokemon_meta table exists)
  *   - NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local
  *
- * Takes ~3-5 minutes due to PokéAPI rate limiting (100 req/min).
+ * Takes a few minutes due to PokéAPI rate limiting (100 req/min).
  * Progress is logged to stdout.
  */
 
@@ -22,27 +23,17 @@ import dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 import { createClient } from '@supabase/supabase-js'
 
-// ── Config ────────────────────────────────────────────────────────────────────
-
 const POKEAPI_BASE = 'https://pokeapi.co/api/v2'
 
 // PokéAPI has a rate limit of ~100 requests/minute for anonymous clients.
 // 700ms between requests keeps us safely under.
-const REQUEST_DELAY_MS = 700
-
-// Only seed up to this national dex number.
-// Gen 1-9 is 1010. Adjust if a new generation is added.
-const MAX_SPECIES_ID = 1010
-
-// ── Supabase admin client ─────────────────────────────────────────────────────
+const REQUEST_DELAY_MS = 100
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } }
 )
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -55,10 +46,16 @@ async function fetchJson(url: string): Promise<any> {
 }
 
 /**
- * Determine if a species is mega-capable by checking all its form variants.
- * PokéAPI's pokemon-form endpoint has an `is_mega` boolean on each form.
- *
- * A species is mega-capable if ANY of its forms has is_mega = true.
+ * Fetch the list of species IDs available in the Champions format.
+ * entry_number in the champions pokédex is the national dex number (= species_id).
+ */
+async function fetchChampionsSpeciesIds(): Promise<number[]> {
+  const data = await fetchJson(`${POKEAPI_BASE}/pokedex/champions`)
+  return data.pokemon_entries.map((e: any) => e.entry_number as number)
+}
+
+/**
+ * A species is mega-capable if ANY of its form variants has is_mega = true.
  */
 async function isMegaCapable(speciesData: any): Promise<boolean> {
   const varieties: Array<{ pokemon: { url: string } }> = speciesData.varieties
@@ -85,36 +82,44 @@ async function isMegaCapable(speciesData: any): Promise<boolean> {
         continue
       }
 
-      if (formData.is_mega === true) {
-        return true
-      }
+      if (formData.is_mega === true) return true
     }
   }
 
   return false
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+function getStat(stats: any[], name: string): number | null {
+  return stats.find((s: any) => s.stat.name === name)?.base_stat ?? null
+}
 
 async function main() {
-  console.log('Starting pokemon_meta seed...')
-  console.log(`   Seeding species 1–${MAX_SPECIES_ID}`)
-  console.log(`   Request delay: ${REQUEST_DELAY_MS}ms (PokéAPI rate limit)\n`)
+  console.log('Fetching Champions pokédex...')
+  const speciesIds = await fetchChampionsSpeciesIds()
+  console.log(`Found ${speciesIds.length} species in Champions format.`)
+  console.log(`Request delay: ${REQUEST_DELAY_MS}ms (PokéAPI rate limit)\n`)
+
+  console.log('Clearing pokemon_meta...')
+  const { error: deleteError } = await supabase.from('pokemon_meta').delete().gte('species_id', 0)
+  if (deleteError) {
+    console.error('Failed to clear table:', deleteError.message)
+    process.exit(1)
+  }
+  console.log('Table cleared.\n')
 
   let seeded = 0
   let skipped = 0
   let errors = 0
 
-  for (let speciesId = 1; speciesId <= MAX_SPECIES_ID; speciesId++) {
+  for (const speciesId of speciesIds) {
     try {
       await sleep(REQUEST_DELAY_MS)
 
       const speciesData = await fetchJson(`${POKEAPI_BASE}/pokemon-species/${speciesId}/`)
 
-      // Get the default variety for name and sprite
       const defaultVariety = speciesData.varieties.find((v: any) => v.is_default)
       if (!defaultVariety) {
-        console.warn(`  ⚠  ${speciesId}: no default variety, skipping`)
+        console.warn(`  [SKIP] ${speciesId}: no default variety`)
         skipped++
         continue
       }
@@ -122,24 +127,21 @@ async function main() {
       await sleep(REQUEST_DELAY_MS)
       const pokemonData = await fetchJson(defaultVariety.pokemon.url)
 
-      // English name from species names array
       const englishName =
         speciesData.names.find((n: any) => n.language.name === 'en')?.name ??
         speciesData.name
 
-      // Types from default variety
-      const types: string[] = pokemonData.types.map(
-        (t: any) => t.type.name as string
-      )
+      const types: string[] = pokemonData.types.map((t: any) => t.type.name as string)
 
-      // Front default sprite
-      const spriteUrl: string | null =
-        pokemonData.sprites?.front_default ?? null
+      const sprites = pokemonData.sprites
+      const spriteFront:    string | null = sprites?.front_default ?? null
+      const spriteHome:     string | null = sprites?.other?.home?.front_default ?? null
+      const spriteShowdown: string | null = sprites?.other?.showdown?.front_default ?? null
 
-      // Check mega capability
+      const stats = pokemonData.stats ?? []
+
       const megaCapable = await isMegaCapable(speciesData)
 
-      // Upsert into pokemon_meta
       const { error } = await supabase
         .from('pokemon_meta')
         .upsert(
@@ -147,40 +149,47 @@ async function main() {
             species_id:      speciesId,
             name:            englishName,
             is_mega_capable: megaCapable,
-            sprite_url:      spriteUrl,
+            sprite_front:    spriteFront,
+            sprite_home:     spriteHome,
+            sprite_showdown: spriteShowdown,
             types,
+            hp:              getStat(stats, 'hp'),
+            attack:          getStat(stats, 'attack'),
+            defense:         getStat(stats, 'defense'),
+            special_attack:  getStat(stats, 'special-attack'),
+            special_defense: getStat(stats, 'special-defense'),
+            speed:           getStat(stats, 'speed'),
           },
           { onConflict: 'species_id' }
         )
 
       if (error) {
-        console.error(`  ✗  ${speciesId} (${englishName}): DB error — ${error.message}`)
+        console.error(`  [ERR]  ${speciesId} (${englishName}): ${error.message}`)
         errors++
         continue
       }
 
-      const megaFlag = megaCapable ? ' ★ MEGA' : ''
-      console.log(`  ✓  ${String(speciesId).padStart(4, ' ')} ${englishName}${megaFlag}`)
+      const megaFlag = megaCapable ? ' [MEGA]' : ''
+      console.log(`  [OK]   ${String(speciesId).padStart(4, ' ')} ${englishName}${megaFlag}`)
       seeded++
 
     } catch (err: any) {
-      console.error(`  ✗  ${speciesId}: ${err.message}`)
+      console.error(`  [ERR]  ${speciesId}: ${err.message}`)
       errors++
-      // Continue rather than abort — one bad species shouldn't stop the whole run
     }
   }
 
   console.log(`\nDone.`)
-  console.log(`   Seeded:  ${seeded}`)
-  console.log(`   Skipped: ${skipped}`)
-  console.log(`   Errors:  ${errors}`)
+  console.log(`  Seeded:  ${seeded}`)
+  console.log(`  Skipped: ${skipped}`)
+  console.log(`  Errors:  ${errors}`)
 
   if (errors > 0) {
-    console.log('\nSome species failed. Re-run the script to retry — upsert is safe.')
+    console.log('\nSome species failed. Re-run to retry — upsert is safe.')
   }
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err)
+  console.error('Fatal:', err)
   process.exit(1)
 })

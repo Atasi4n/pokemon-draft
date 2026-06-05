@@ -17,8 +17,16 @@ export type PokemonMetaRow = {
   species_id:      number
   name:            string
   is_mega_capable: boolean
-  sprite_url:      string | null
+  sprite_front:    string | null
+  sprite_home:     string | null
+  sprite_showdown: string | null
   types:           string[] | null
+  hp:              number | null
+  attack:          number | null
+  defense:         number | null
+  special_attack:  number | null
+  special_defense: number | null
+  speed:           number | null
 }
 
 export type EventRow = {

@@ -67,7 +67,7 @@ npx supabase db push
 
 ### 4. Seed pokemon reference data
 
-Run once ever — fetches ~1000 pokemon from PokéAPI and populates `pokemon_meta`. Takes ~5 minutes.
+Run once ever — fetches the 191 pokemon available in Champions format from PokéAPI and populates `pokemon_meta`. Takes ~1–2 minutes.
 
 ```bash
 npx ts-node --project tsconfig.seed.json supabase/seeds/seed_pokemon_meta.ts
