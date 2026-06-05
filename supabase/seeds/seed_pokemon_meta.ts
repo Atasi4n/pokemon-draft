@@ -12,7 +12,7 @@
  *
  * Prerequisites:
  *   - Migrations must have been applied (pokemon_meta table exists)
- *   - SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local
+ *   - NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local
  *
  * Takes ~3-5 minutes due to PokéAPI rate limiting (100 req/min).
  * Progress is logged to stdout.
@@ -37,7 +37,7 @@ const MAX_SPECIES_ID = 1010
 // ── Supabase admin client ─────────────────────────────────────────────────────
 
 const supabase = createClient(
-  process.env.SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } }
 )

@@ -27,8 +27,7 @@
  * Safe to re-run for the same event — existing records are detected and skipped.
  */
 
-import dotenv from 'dotenv'
-dotenv.config({ path: '.env.local' })
+import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
 import { EVENTS_CONFIG } from '../../src/lib/config/event.config'
 import { AUCTION_CONFIG } from '../../src/lib/config/auction.config'
@@ -36,7 +35,7 @@ import { AUCTION_CONFIG } from '../../src/lib/config/auction.config'
 // ── Admin client ──────────────────────────────────────────────────────────────
 
 const supabase = createClient(
-  process.env.SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } }
 )
