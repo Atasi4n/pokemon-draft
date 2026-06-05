@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# supabase cli state (contains project ref and org id)
+supabase/.temp/
+
+# event config contains plaintext passwords for the seed script
+src/lib/config/event.config.ts
