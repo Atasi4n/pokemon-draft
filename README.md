@@ -114,6 +114,10 @@ npm run dev
 After schema changes, re-generate `database.types.ts`:
 
 ```bash
+# Against local Supabase
+npx supabase gen types typescript --local > src/types/database.types.ts
+
+# Against remote project
 npx supabase gen types typescript --project-id your-project-id > src/types/database.types.ts
 ```
 
@@ -127,7 +131,8 @@ npm run build        Production build
 npm run lint         Run ESLint
 
 npx supabase db push                                          Apply migrations
-npx supabase gen types typescript --project-id <id> > ...     Regenerate DB types
+npx supabase gen types typescript --local > ...               Regenerate DB types (local)
+npx supabase gen types typescript --project-id <id> > ...     Regenerate DB types (remote)
 npx ts-node --project tsconfig.seed.json supabase/seeds/seed_pokemon_meta.ts
 npx ts-node --project tsconfig.seed.json supabase/seeds/seed_event.ts
 ```
