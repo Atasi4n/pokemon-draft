@@ -9,13 +9,12 @@
     "outDir": ".seed-dist",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["apps/draft/src/*"]
     }
   },
   "include": [
     "supabase/seeds/**/*.ts",
-    "src/lib/config/**/*.ts",
-    "src/types/**/*.ts"
+    "apps/draft/src/lib/config/**/*.ts"
   ],
   "exclude": [
     "node_modules"

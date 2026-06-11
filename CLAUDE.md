@@ -1,470 +1,140 @@
 @AGENTS.md
-# CLAUDE.md — Pokémon Paralímpico Draft App
+# Axoloto — Pokémon monorepo
 
-This file contains everything needed to work on this project.
-Read it fully before writing any code.
+Read this fully before writing code. It is the contract for how this repo works.
 
----
+## What this is
 
-## What this project is
+A pnpm + Turborepo monorepo for the **Axoloto** Pokémon project. Two apps share one Supabase database:
 
-A realtime web application for hosting a custom Pokémon auction draft event called **Pokémon Paralímpico**. It is a one-off live event with 8 participants, 8 coaches, and 1 host interacting in realtime during a structured Pokémon auction. It is NOT a generic Pokémon platform.
+- **`apps/draft`** (`draft.axoloto.app`) — realtime auction app for the one-off **Pokémon Paralímpico** event: 8 participants, 8 coaches, 1 host bidding live for teams of 6. This is the mature app.
+- **`apps/team`** (`team.axoloto.app`) — Tinder-style Pokémon swiper / wishlist builder. Read-only, no auth, no DB writes. (Not built yet.)
+- **`apps/web`** (`axoloto.app`) — landing page. (Not built yet.)
 
----
+Each app deploys as its own Vercel project (Root Directory = `apps/<name>`). The `supabase/` dir is shared infra, deployed by neither.
 
-## Tech stack
+## Monorepo layout
 
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 15 (App Router) |
-| UI | React 19, Tailwind CSS, shadcn/ui |
-| State | Zustand (client display state only) |
-| Database | Supabase (PostgreSQL) |
-| Realtime | Supabase Realtime |
-| Auth | Supabase Auth (manual credentials, no public signup) |
-| External API | PokéAPI |
-| Deployment | Vercel |
+```
+axoloto/
+├── apps/
+│   ├── draft/        ← auction app (Next.js 16, App Router)
+│   ├── team/         ← swiper app (not built)
+│   └── web/          ← landing (not built)
+├── packages/
+│   └── supabase/     ← @axoloto/supabase: shared DB types + anon browser client
+├── supabase/         ← migrations, edge functions, seeds (shared DB — STAYS at root)
+├── pnpm-workspace.yaml, turbo.json, tsconfig.seed.json
+└── package.json      ← workspace root (turbo + seed scripts)
+```
 
----
+**`@axoloto/supabase`** exports only the `Database` type + `createBrowserSupabaseClient()` (anon key). The service-role/server clients live in `apps/draft` and must NEVER be exported to a package or shipped to the browser. `apps/draft` re-exports `Database` via a shim at `src/types/database.types.ts` so its `@/types/database.types` imports stay valid — regenerate types into `packages/supabase/src/database.types.ts`.
 
 ## Core architectural rules — never break these
 
-1. **ALL auction logic runs server-side.** The client never decides if a bid is valid, who won, when a timer ends, or when phases change. Clients only display data, send actions, and subscribe to realtime updates.
+1. **ALL auction logic runs server-side.** The client never decides bid validity, winners, timer expiry, or phase changes. Clients display data, send actions, subscribe to realtime.
+2. **Realtime is sync only.** Subscriptions update UI. They contain no business logic.
+3. **Feature-based structure.** Logic lives in `src/features/`, not global `components/`/`services/`/`hooks/`.
+4. **Never trust client input.** Every client action is re-validated server-side before any DB write.
+5. **The engine is the heart.** All auction rules live in `apps/draft/src/features/auction/engine/`. UI never contains rules and never imports the engine directly — only Server Actions do.
+6. **`apps/team` never writes to the DB.** Anon key, read-only, fully client-side after initial fetch.
 
-2. **Realtime is for synchronization only.** Supabase Realtime subscriptions update the UI. They never contain business logic or make decisions.
-
-3. **Feature-based folder structure.** Logic lives in `src/features/`, not in global `components/`, `services/`, or `hooks/` folders.
-
-4. **Never trust client input.** Every action from the client is re-validated server-side before any DB write.
-
-5. **The auction engine is the heart.** All business rules live in `src/features/auction/engine/`. The UI never contains auction rules.
-
----
-
-## Project folder structure
+## Draft app structure (`apps/draft/src/`)
 
 ```
-project-root/
-│
-├── supabase/
-│   ├── migrations/          ← SQL migrations, run in filename order
-│   └── seeds/               ← ts-node scripts, run manually before event
-│
-├── src/
-│   ├── app/
-│   │   ├── login/
-│   │   ├── auction/         ← participant desktop interface
-│   │   ├── stream/          ← broadcast/OBS view (public, read-only)
-│   │   ├── host/            ← host admin interface
-│   │   ├── mobile/          ← participant mobile companion
-│   │   └── api/             ← Next.js API route handlers
-│   │
-│   ├── components/
-│   │   ├── ui/              ← shadcn components (do not edit)
-│   │   └── shared/          ← shared display components
-│   │
-│   ├── features/
-│   │   ├── auction/
-│   │   │   ├── actions/     ← Next.js Server Actions (thin wrappers over engine)
-│   │   │   ├── components/  ← auction-specific UI components
-│   │   │   ├── engine/      ← ALL business logic lives here
-│   │   │   ├── hooks/       ← client-side React hooks
-│   │   │   ├── realtime/    ← Supabase Realtime subscription setup
-│   │   │   ├── services/    ← DB query functions (read-only, no logic)
-│   │   │   ├── types/       ← auction-specific types
-│   │   │   ├── utils/       ← pure utility functions
-│   │   │   └── validators/  ← input shape validators (zod)
-│   │   ├── auth/
-│   │   ├── host/
-│   │   ├── participants/
-│   │   ├── pokemon/
-│   │   └── teams/
-│   │
-│   ├── lib/
-│   │   ├── config/
-│   │   │   ├── auction.config.ts   ← event rules/constants
-│   │   │   └── event.config.ts     ← event roster and credentials
-│   │   └── supabase/
-│   │       ├── client.ts    ← browser client (anon key)
-│   │       ├── server.ts    ← server client (anon key + cookies, respects RLS)
-│   │       └── admin.ts     ← service role client (seed scripts ONLY)
-│   │
-│   ├── server/
-│   │   ├── auction/         ← server-only auction helpers
-│   │   ├── auth/            ← session/role helpers
-│   │   ├── database/        ← raw DB query helpers
-│   │   └── realtime/        ← server-side realtime helpers
-│   │
-│   └── types/
-│       ├── auction.types.ts ← all DB row types and enums
-│       └── database.types.ts ← auto-generated by Supabase CLI
-│
-├── .env.local               ← NEVER commit. Contains Supabase keys.
-├── tsconfig.json            ← Next.js tsconfig
-├── tsconfig.seed.json       ← tsconfig for seed scripts (ts-node)
-└── middleware.ts            ← route protection by role
+app/            login/ auction/ stream/ host/ mobile/ api/
+features/
+  auction/      actions/ components/ engine/ hooks/ realtime/ services/ types/ utils/ validators/
+  auth/ host/ participants/ pokemon/ teams/
+lib/
+  config/       auction.config.ts (rules/constants), event.config.ts (roster + creds, GITIGNORED)
+  supabase/     client.ts (browser), server.ts (cookies, respects RLS), admin.ts (service role — seeds ONLY)
+server/         auction/ auth/ database/ realtime/   (server-only helpers)
+types/          auction.types.ts (DB rows + enums), database.types.ts (shim → @axoloto/supabase)
 ```
 
----
-
-## Database schema
-
-### Global tables (no event_id)
-
-**users** — mirrors auth.users. One row per authenticated user.
-- `id` uuid PK (= auth.users.id)
-- `username` text unique
-- `role` enum: HOST | PARTICIPANT | COACH
-
-**pokemon_meta** — pre-seeded reference. Never event-scoped.
-- `species_id` int PK (national dex number, same for all forms)
-- `name` text
-- `is_mega_capable` bool
-- `sprite_url` text
-- `types` text[]
-
-**events** — one row per event.
-- `id` uuid PK
-- `slug` text unique (e.g. "paralimpico-2025")
-- `display_name` text
-- `config_key` text (maps to ruleset in auction.config.ts)
-- `status` enum: DRAFT | ACTIVE | ARCHIVED
-- `created_at` timestamptz
-
-### Event-scoped tables (all carry event_id FK)
-
-**participants**
-- `id`, `event_id`, `user_id`, `display_name`, `team_name`
-- `budget` int default 1000, CHECK >= 0
-- `has_mega` bool — true when any team slot is_mega_capable
-- `special_session_won` bool
-- `connection_status` enum: OFFLINE | WAITING | READY
-- UNIQUE(event_id, user_id)
-
-**coaches**
-- `id`, `event_id`, `user_id`, `display_name`
-- UNIQUE(event_id, user_id)
-
-**coach_participants** — join table, supports 1-to-many for future events
-- `id`, `event_id`, `coach_id`, `participant_id`
-- `overrides_remaining` int default 2, CHECK >= 0
-- UNIQUE(event_id, coach_id, participant_id)
-
-**auction_turns** — written once by startEvent(), never mutated
-- `id`, `event_id`, `participant_id`, `position` int
-- UNIQUE(event_id, participant_id), UNIQUE(event_id, position)
-
-**auction_state** — exactly ONE row per event, mutated in place
-- `event_id` unique FK
-- `phase` enum: WAITING | MEGA | MAIN | SPECIAL | ENDED
-- `status` enum: IDLE | NOMINATING | BIDDING | RESOLVING
-- `current_turn_id` FK → auction_turns
-- `current_auction_pokemon_id` FK → auction_pokemon
-- `timer_ends_at` timestamptz
-- `host_override_active` bool
-
-**auction_pokemon** — one row per nominated pokemon
-- `id`, `event_id`
-- `species_id` int (snapshot, not FK)
-- `name_snapshot`, `sprite_snapshot` — copied from PokéAPI at nomination time
-- `is_mega_capable` bool
-- `nominated_by` enum: PARTICIPANT | COACH_OVERRIDE | HOST
-- `nominated_by_participant_id` FK nullable
-- `status` enum: ACTIVE | SOLD | CANCELLED
-- `sold_to` FK nullable, `sold_price` int nullable
-- `nominated_at` timestamptz
-
-**bids** — append-only, never updated or deleted
-- `id`, `event_id`, `auction_pokemon_id`, `participant_id`
-- `amount` int, CHECK >= 50 AND <= 750
-- `placed_at` timestamptz (DB default, never from client)
-
-**team_pokemon** — written by resolveAuction when a bid is won
-- `id`, `event_id`, `participant_id`
-- `species_id` int
-- `name_snapshot`, `sprite_snapshot`
-- `is_mega_capable` bool (did this pokemon fulfill mega requirement — NOT "is in mega form")
-- `purchase_price` int
-- `auction_pokemon_id` FK
-- UNIQUE(event_id, participant_id, species_id) — enforces one form per line
-
-**special_auction_items** — seeded before event, one per coach
-- `id`, `event_id`, `coach_id`
-- `description` text
-- `status` enum: PENDING | ACTIVE | SOLD | FREE
-- `won_by` FK nullable, `final_price` int default 0
-
----
-
-## Auction config constants
-
-```ts
-// src/lib/config/auction.config.ts
-INITIAL_BUDGET:      1000
-MIN_BID:             50
-MAX_BID:             750
-MIN_INCREMENT:       25
-TEAM_SIZE:           6
-TIMER_SECONDS:       30
-BID_EXTENSION_SECS:  5    // added per bid, never exceeds TIMER_SECONDS
-BID_COOLDOWN_SECS:   2    // server-side anti-spam
-COACH_OVERRIDES:     2    // per coach, total for the event
-
-BANNED_SPECIES_IDS:  [9, 94, 121, 448, 964]
-// 9=Blastoise, 94=Gengar, 121=Starmie, 448=Lucario, 964=Palafin
-// Banning by species_id covers all forms (Palafin-Zero and Palafin-Hero both = 964)
-
-BAN_VIOLATION_PENALTY: 100  // budget deducted for asking about a banned pokemon
-```
-
----
-
-## Event rules (source of truth)
-
-### Phases
-1. **WAITING** — event created, waiting room open, host hasn't started
-2. **MEGA** — only mega-capable pokemon can be nominated; ends automatically when all participants have has_mega = true
-3. **MAIN** — turn-based nomination draft
-4. **SPECIAL** — training session auction after all teams have 6 pokemon
-5. **ENDED** — auction complete
-
-### Mega phase rules
-- Only pokemon where `is_mega_capable = true` may be nominated
-- Banned species never appear, even in mega phase
-- Players draft the BASE FORM — mega evolution happens in battle, not in the draft
-- A player satisfies the mega requirement by owning any pokemon with `is_mega_capable = true`
-- After mega phase, players MAY still draft mega-capable pokemon in main phase
-- A team can have multiple mega-capable pokemon; only one can mega evolve per battle (Showdown rule)
-
-### Turn system
-- Turn order is randomized at event start and never changes
-- Current participant nominates a pokemon
-- If nominated pokemon gets zero bids → auto-assigned to nominator for MIN_BID ($50)
-- Coach can override nomination using one of their 2 overrides (tracked in coach_participants.overrides_remaining)
-- Participant may delegate nomination to host
-
-### Bidding rules
-- Auction starts at MIN_BID ($50)
-- Each new bid must be ≥ current highest + MIN_INCREMENT ($25)
-- Bid cannot exceed MAX_BID ($750)
-- Budget protection: participant must always retain enough budget to fill remaining roster slots × MIN_BID
-  - Example: 2 slots remaining → must keep ≥ $100 → max spendable = budget - 100
-- Timer extends by BID_EXTENSION_SECS on each bid, but never above TIMER_SECONDS
-- Anti-spam: 2 second cooldown between bids per participant (server-side)
-- Host can undo the last bid
-
-### Special auction
-- Runs after all 8 participants have full teams of 6
-- One item per coach (training session with that coach)
-- Each participant can only win 1 special session total
-- If no bids → session goes FREE ($0) to the nominating coach's paired participant
-
-### Budget protection formula
-```
-slots_remaining = TEAM_SIZE - current_team_size
-min_reserve = slots_remaining * MIN_BID
-max_bid_allowed = min(participant.budget - min_reserve, MAX_BID)
-```
-
----
-
-## Auction engine files
-
-All business logic lives in `src/features/auction/engine/`. These functions are server-only. The UI never imports from this folder directly — only Server Actions do.
-
-| File | Responsibility |
-|---|---|
-| `validateNomination.ts` | Check nomination is legal (right turn, not banned, not already owned, mega phase rules) |
-| `validateBid.ts` | Check bid amount, cooldown, budget protection |
-| `placeBid.ts` | Call validateBid + atomic DB write via RPC |
-| `resolveAuction.ts` | Called when timer expires: assign winner, deduct budget, update has_mega, advance turn |
-| `advanceTurn.ts` | Move current_turn_id to next position in auction_turns |
-| `checkMegaPhase.ts` | Check if all participants have has_mega = true → auto-transition to MAIN |
-| `startEvent.ts` | Randomize participant order, write auction_turns, transition WAITING → MEGA |
-| `finishAuction.ts` | Transition SPECIAL → ENDED, final state cleanup |
-
----
-
-## PostgreSQL RPCs (atomic transactions)
-
-Two critical operations must be Postgres functions to prevent race conditions:
-
-**`place_bid()`** — called by placeBid.ts
-1. BEGIN
-2. SELECT FOR UPDATE on auction_state (row lock)
-3. Validate: amount > current highest bid
-4. INSERT into bids
-5. UPDATE auction_state.timer_ends_at (extend, never exceed base)
-6. COMMIT
-
-**`resolve_auction()`** — called when timer expires
-1. Find highest bid for current auction_pokemon_id
-2. INSERT into team_pokemon
-3. UPDATE participants.budget (deduct)
-4. UPDATE participants.has_mega if is_mega_capable
-5. UPDATE auction_pokemon.status = SOLD
-6. Call advanceTurn logic
-7. Must be idempotent (safe to call twice)
-
----
-
-## Server Actions (API layer)
-
-Thin wrappers in `src/features/auction/actions/`. They:
-1. Authenticate the caller
-2. Resolve caller identity (which participant/coach)
-3. Call the engine function
-4. Return `{ success, data?, error? }`
-
-Never expose internal error details to the client.
-
-| Action | Auth required | Calls |
-|---|---|---|
-| `placeBid(eventId, amount)` | PARTICIPANT | placeBid engine |
-| `nominatePokemon(eventId, speciesId)` | PARTICIPANT or COACH | validateNomination engine |
-| `startEvent(eventId)` | HOST | startEvent engine |
-| `skipTurn(eventId)` | HOST | advanceTurn engine |
-| `cancelAuction(eventId)` | HOST | sets auction_pokemon.status = CANCELLED |
-| `editBudget(eventId, participantId, amount)` | HOST | direct DB update |
-| `assignPokemon(eventId, speciesId, participantId)` | HOST | assignPokemon engine |
-
----
-
-## Realtime subscriptions
-
-Clients subscribe to these tables via Supabase Realtime. Logic never runs in subscription handlers — only UI state updates.
-
-| Table | What triggers a subscription | Who subscribes |
-|---|---|---|
-| `auction_state` | Any phase/status/timer/turn change | Everyone |
-| `bids` | New bid placed (filtered by current auction_pokemon_id) | Everyone |
-| `participants` | Budget change, has_mega change, connection_status | Everyone |
-| `team_pokemon` | New pokemon assigned to a team | Everyone |
-
-**Reconnect pattern**: on page load, always fetch full `AuctionSnapshot` via HTTP first, then subscribe to realtime. Never rely on realtime alone for initial state.
-
----
-
-## Supabase client usage rules
-
-| Client | File | Use for | Bypasses RLS? |
+| Supabase client | File | RLS | Use |
 |---|---|---|---|
-| Browser | `lib/supabase/client.ts` | React components | No |
-| Server | `lib/supabase/server.ts` | Server Actions, Route Handlers | No |
-| Admin | `lib/supabase/admin.ts` | Seed scripts ONLY | Yes |
+| Browser | `lib/supabase/client.ts` | yes | React components |
+| Server | `lib/supabase/server.ts` | yes | Server Actions, Route Handlers |
+| Admin | `lib/supabase/admin.ts` | **bypasses** | Seed scripts ONLY — never browser-reachable |
 
-`admin.ts` must NEVER be imported from any file that ships to the browser or any route accessible to users.
-
----
-
-## Authentication
-
-- No public registration. Credentials created by seed script before event.
-- Supabase Auth email format: `username@paralimpico.local` (internal only)
-- Role stored in `users.role`, not in JWT by default — read via `auth_user_role()` SQL helper
-- Route protection via `middleware.ts`:
-  - `/host/*` → HOST only
-  - `/auction/*` → PARTICIPANT or COACH
-  - `/mobile/*` → PARTICIPANT or COACH
-  - `/stream/*` → public (no auth)
-  - `/login` → public
-
----
-
-## Four interfaces
-
-| Interface | Route | Audience | Notes |
-|---|---|---|---|
-| Stream / Broadcast | `/stream` | Public | OBS capture, Discord stream. Read-only. Esports style, large typography. |
-| Host panel | `/host` | HOST only | Start event, skip turns, cancel/reopen auctions, edit budgets, assign pokemon manually. |
-| Participant desktop | `/auction` | PARTICIPANT, COACH | Place bids, nominate pokemon, view roster, bid history. |
-| Participant mobile | `/mobile` | PARTICIPANT, COACH | Companion controller. Bidding, timer, pokemon selection only. Minimal UI. |
-
----
-
-## Timer architecture
-
-The timer lives in `auction_state.timer_ends_at` (a timestamptz). Clients compute the remaining seconds by diffing against their local clock — they never store the timer locally.
-
-Timer resolution (detecting expiry) must happen server-side via one of:
-- A Supabase Edge Function on a cron schedule (recommended)
-- `pg_cron` extension calling `resolve_auction()` RPC
-
-The client never triggers timer expiry. If a client's timer display hits zero, it simply shows 0 and waits for the server to broadcast the resolution via Realtime.
-
----
-
-## Key decisions log
-
-| Decision | Reason |
-|---|---|
-| Snapshot name+sprite at nomination time | Event resilient to PokéAPI downtime |
-| pokemon_meta pre-seeded before event | No live PokéAPI calls during auction for critical logic |
-| species_id (not pokemon_id) for uniqueness | Handles all forms of same pokemon line (Charizard + Mega Charizard X = same species) |
-| UNIQUE(event_id, participant_id, species_id) on team_pokemon | DB-level enforcement of "one form per line" rule |
-| auction_state is a single mutable row | Simplest Realtime subscription — clients watch one row |
-| Banned pokemon in config, not DB | Version-controlled, impossible to accidentally change mid-event |
-| coach_participants join table | Supports 1-to-many for future events while working 1-to-1 today |
-| events.status DRAFT→ACTIVE→ARCHIVED | Admin creates event days before; activates when ready for participants to see |
-| auction_turns written once at startEvent | Turn order is permanent for the event |
-
----
-
-## What is already built
-
-- [x] Database schema (5 migrations)
-- [x] `auction.config.ts` with full ban list
-- [x] `event.config.ts` with roster template
-- [x] `lib/supabase/client.ts` (browser)
-- [x] `lib/supabase/server.ts` (server)
-- [x] `lib/supabase/admin.ts` (seed scripts only)
-- [x] `supabase/seeds/seed_pokemon_meta.ts`
-- [x] `supabase/seeds/seed_event.ts`
-- [x] `src/types/auction.types.ts`
-- [x] `tsconfig.seed.json`
-
-## What is NOT yet built
-
-- [ ] Auction engine (`src/features/auction/engine/`)
-- [ ] PostgreSQL RPCs (`place_bid`, `resolve_auction`)
-- [ ] Server Actions (`src/features/auction/actions/`)
-- [ ] Realtime subscriptions (`src/features/auction/realtime/`)
-- [ ] `middleware.ts` route protection
-- [ ] All four UI interfaces
-- [ ] Timer resolution cron/edge function
-- [ ] `AuctionSnapshot` server query (reconnect recovery)
-
----
-
-## Environment variables required
+## Auction config (source of truth: `auction.config.ts`)
 
 ```
-# .env.local — never commit this file
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # seed scripts only
+INITIAL_BUDGET 1000   MIN_BID 50   MAX_BID 750   MIN_INCREMENT 25   TEAM_SIZE 6
+TIMER_SECONDS 30   BID_EXTENSION_SECS 5 (never exceeds TIMER)   BID_COOLDOWN_SECS 2
+COACH_OVERRIDES 2 (per coach, whole event)   BAN_VIOLATION_PENALTY 100
+BANNED_SPECIES_IDS [9, 94, 121, 448, 964]  (by species_id → covers all forms)
 ```
 
----
+**Budget protection:** `max_bid_allowed = min(budget - (TEAM_SIZE - team_size) * MIN_BID, MAX_BID)`. A participant must always retain enough to fill remaining slots at MIN_BID.
 
-## Commands reference
+## Event rules
+
+**Phases:** WAITING → MEGA → MAIN → SPECIAL → ENDED
+- **MEGA**: only `is_mega_capable` pokemon nominable; ends when all participants have `has_mega = true`. Players draft the BASE form (mega evolves in battle). Banned species never appear, even here.
+- **MAIN**: turn-based nomination draft. Mega-capable pokemon may still be drafted.
+- **SPECIAL**: after all teams hit 6 pokemon — one training-session item per coach; each participant wins at most 1; no bids → FREE ($0) to the coach's paired participant.
+
+**Turns:** order randomized once at start (`auction_turns`, never mutated). Nominator picks; zero bids → auto-assigned to nominator at MIN_BID. Coach may override (2/event); participant may delegate to host.
+
+**Bidding:** starts at MIN_BID; each bid ≥ current + MIN_INCREMENT, ≤ MAX_BID; timer extends BID_EXTENSION_SECS (capped at TIMER); 2s server-side cooldown; host can undo last bid.
+
+## Engine files (`features/auction/engine/`, server-only)
+
+`validateNomination` · `validateBid` · `placeBid` (validate + atomic RPC) · `resolveAuction` (timer expiry: winner, budget, has_mega, advance turn) · `advanceTurn` · `checkMegaPhase` (auto MEGA→MAIN) · `startEvent` (randomize order, WAITING→MEGA) · `finishAuction` (SPECIAL→ENDED).
+
+**Two operations MUST be atomic Postgres RPCs** (race safety):
+- `place_bid()` — lock auction_state FOR UPDATE, validate > highest, insert bid, extend timer.
+- `resolve_auction()` — highest bid → team_pokemon, deduct budget, update has_mega, mark SOLD, advance turn. **Must be idempotent.**
+
+**Server Actions** (`features/auction/actions/`) are thin wrappers: authenticate → resolve identity → call engine → return `{ success, data?, error? }`. Never leak internal errors to the client.
+
+## Timer
+
+Lives in `auction_state.timer_ends_at` (timestamptz). Clients diff against local clock to display; they never store or trigger expiry. Expiry is resolved server-side (Supabase edge function on cron / `pg_cron` → `resolve_auction()`). Client at 0 just shows 0 and waits for the realtime broadcast.
+
+## Realtime
+
+On load: fetch full snapshot over HTTP first, THEN subscribe. Never rely on realtime for initial state. Subscribed tables (UI updates only): `auction_state`, `bids` (filtered by current pokemon), `participants`, `team_pokemon`.
+
+## Database schema (Postgres / Supabase)
+
+**Global:** `users` (id=auth.users.id, username, role HOST|PARTICIPANT|COACH) · `pokemon_meta` (species_id PK = national dex, name, is_mega_capable, sprite, types[], `ability`) · `events` (slug, status DRAFT|ACTIVE|ARCHIVED, config_key).
+
+**Event-scoped** (all carry `event_id`):
+- `participants` — budget (default 1000, CHECK ≥0), has_mega, special_session_won, connection_status. UNIQUE(event_id, user_id).
+- `coaches`, `coach_participants` (join, overrides_remaining default 2).
+- `auction_turns` — written once at start; UNIQUE(event_id, position) & (event_id, participant_id).
+- `auction_state` — exactly ONE row/event, mutated in place. phase, status (IDLE|NOMINATING|BIDDING|RESOLVING), current_turn_id, current_auction_pokemon_id, timer_ends_at, host_override_active.
+- `auction_pokemon` — species_id + name/sprite snapshot (PokéAPI-downtime resilient), nominated_by, status ACTIVE|SOLD|CANCELLED, sold_to/sold_price.
+- `bids` — append-only, never updated/deleted. amount CHECK 50–750. placed_at = DB default.
+- `team_pokemon` — written by resolve_auction. species_id, snapshots, is_mega_capable, purchase_price. UNIQUE(event_id, participant_id, species_id) enforces one-form-per-line.
+- `special_auction_items` — one per coach, status PENDING|ACTIVE|SOLD|FREE.
+
+Key conventions: snapshot name+sprite at nomination time; identity keyed by `species_id` (all forms of a line share it); banned list in config (version-controlled), not DB.
+
+## Auth
+
+No public signup. Credentials seeded before the event. Auth email format `username@paralimpico.local`. Role in `users.role` (read via `auth_user_role()` SQL helper). `middleware.ts`: `/host/*`→HOST, `/auction/*` & `/mobile/*`→PARTICIPANT|COACH, `/stream/*` & `/login`→public.
+
+## Commands
+
+Package manager is **pnpm 9** (pinned via `packageManager`). If the global `pnpm` shim is missing, invoke as `corepack pnpm@9.15.0 …` (or run `corepack enable pnpm` once in an elevated shell).
 
 ```bash
-# Apply migrations to remote Supabase project
-npx supabase db push
+pnpm install                              # install workspace
+pnpm --filter @axoloto/draft dev          # run draft app
+pnpm --filter @axoloto/draft test         # vitest (draft)
+pnpm build                                # turbo build all apps
+pnpm seed:pokemon                         # seed pokemon_meta (once ever, ~1–2 min)
+pnpm seed:event                           # seed event accounts (once per event)
 
-# Link CLI to remote project (run once)
-npx supabase link --project-ref your-project-id
-
-# Generate TypeScript types from remote schema
-npx supabase gen types typescript --project-id your-project-id > src/types/database.types.ts
-
-# Seed pokemon reference data (run once ever, ~5 minutes)
-npx ts-node --project tsconfig.seed.json supabase/seeds/seed_pokemon_meta.ts
-
-# Seed event accounts and rows (run once per event)
-npx ts-node --project tsconfig.seed.json supabase/seeds/seed_event.ts
-
-# Activate event for participants (run in Supabase Studio SQL editor)
-# UPDATE events SET status = 'ACTIVE' WHERE slug = 'paralimpico-2025';
+npx supabase db push                      # apply migrations
+npx supabase gen types typescript --project-id <id> > packages/supabase/src/database.types.ts
 ```
+
+## Env vars
+
+`apps/draft/.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (seeds only). `apps/team` will need only the two `NEXT_PUBLIC_*` vars. Never commit `.env*` or `event.config.ts`.

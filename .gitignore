@@ -1,8 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -14,11 +14,14 @@
 /coverage
 
 # next.js
-/.next/
-/out/
+.next/
+out/
+
+# turborepo
+.turbo/
 
 # production
-/build
+build/
 
 # misc
 .DS_Store
@@ -45,4 +48,7 @@ supabase/.temp/
 supabase/.branches/
 
 # event config contains plaintext passwords for the seed script
-src/lib/config/event.config.ts
+apps/draft/src/lib/config/event.config.ts
+
+# seed build output
+.seed-dist/

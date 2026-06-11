@@ -29,8 +29,8 @@
 
 import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
-import { EVENTS_CONFIG } from '../../src/lib/config/event.config'
-import { AUCTION_CONFIG } from '../../src/lib/config/auction.config'
+import { EVENTS_CONFIG } from '../../apps/draft/src/lib/config/event.config'
+import { AUCTION_CONFIG } from '../../apps/draft/src/lib/config/auction.config'
 
 // ── Admin client ──────────────────────────────────────────────────────────────
 
